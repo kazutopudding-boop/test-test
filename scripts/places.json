@@ -347,7 +347,7 @@
     {"id": "taipei", "label": "台北", "country": "台湾", "rank": 4, "lat": 25.033, "lng": 121.5654, "names": ["台北"]},
     {"id": "taiwanstrait", "label": "台湾海峡", "rank": 4, "lat": 24.4, "lng": 119.6, "names": ["台湾海峡"]},
     {"id": "scs", "label": "南シナ海", "rank": 3, "lat": 12.0, "lng": 114.0, "names": ["南シナ海"]},
-    {"id": "ecs", "label": "東シナ海", "rank": 3, "lat": 29.0, "lng": 125.0, "names": ["東シナ海"]},
+    {"id": "ecs", "label": "東シナ海", "domestic": true, "rank": 3, "lat": 29.0, "lng": 125.0, "names": ["東シナ海"]},
     {"id": "seoul", "label": "ソウル", "country": "韓国", "rank": 4, "lat": 37.5665, "lng": 126.978, "names": ["ソウル"]},
     {"id": "busan", "label": "釜山", "country": "韓国", "rank": 4, "lat": 35.1796, "lng": 129.0756, "names": ["釜山"]},
     {"id": "pyongyang", "label": "平壌", "country": "北朝鮮", "rank": 4, "lat": 39.0392, "lng": 125.7625, "names": ["平壌", "ピョンヤン"]},

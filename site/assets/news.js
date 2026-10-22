@@ -81,7 +81,7 @@ export function initNews(root, globe) {
 
   function meta(item) {
     const parts = [item.source, formatAgo(item.published)].filter(Boolean);
-    if (item.related > 1) parts.push(`関連記事 ${item.related}件`);
+    if (item.related > 1) parts.push(`関連記事 ${item.related - 1}件`);
     return parts.join(' · ');
   }
 

@@ -56,6 +56,7 @@ class LocateTest(unittest.TestCase):
             "北朝鮮が弾道ミサイル発射": "kp",
             "米アップル 新型iPhoneを発表": "us",
             "米FRB 利下げを決定": "us",
+            "台風30号 東シナ海を北上": "ecs",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -170,6 +171,12 @@ class NewsTest(unittest.TestCase):
         self.assertEqual(pm["source"], "中国新聞")
         self.assertEqual((europe["rank"], europe["loc"]["name"]), (None, "ブリュッセル"))
         self.assertIsNone(meeting["loc"])  # 場所が分からない国際ニュースは地球儀に載せない
+
+    def test_seas_near_japan_stay_domestic(self):
+        rss = GOOGLE_RSS.replace("日経平均、3日ぶり反落".encode(), "台風30号 東シナ海を北上".encode())
+        news = ud.build_news({"top": ud.parse_rss(rss)}, GAZETTEER, {"top": 30})
+        typhoon = next(n for n in news if n["title"].startswith("台風"))
+        self.assertEqual((typhoon["category"], typhoon["loc"]["name"]), ("国内", "東シナ海"))
 
 
 def chart_payload(timestamps, closes, price, market_time, symbol="7203.T", offset=32400):

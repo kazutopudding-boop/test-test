@@ -148,7 +148,7 @@ class Gazetteer:
 
 
 def is_domestic(place: dict) -> bool:
-    return place["id"] == "jp" or place.get("country") == "日本"
+    return place["id"] == "jp" or place.get("country") == "日本" or place.get("domestic", False)
 
 
 def place_to_loc(place: dict) -> dict:
@@ -352,6 +352,8 @@ US_STOCKS = {
     "INTC": "インテル",
 }
 MAX_TRENDING = 8
+# 同じ会社の別の株（議決権の違いなど）は、ウォッチリストの銘柄にまとめる
+SAME_COMPANY = {"GOOG": "GOOGL"}
 
 
 def _round(value: float, decimals: int) -> float:
@@ -440,6 +442,7 @@ def fetch_trending(log: list[str]) -> list[str]:
         payload = json.loads(http_get(TRENDING_URL))
         quotes = payload["finance"]["result"][0]["quotes"]
         symbols = [q["symbol"] for q in quotes if re.fullmatch(r"[A-Z][A-Z.]{0,5}", q.get("symbol", ""))]
+        symbols = list(dict.fromkeys(SAME_COMPANY.get(s, s) for s in symbols))
         log.append(f"米国の話題銘柄: {', '.join(symbols) or 'なし'}")
         return symbols
     except Exception as e:
@@ -522,10 +525,17 @@ def write_summary(news: list[dict], stocks: dict, log: list[str]) -> None:
         f"- 株価 指数 {len(stocks['indices'])} / 日本株 {len(stocks['jp'])} / 米国株 {len(stocks['us'])}"
     )
     lines += ["", "| # | 見出し | 場所 | 分類 |", "|---|---|---|---|"]
-    for i, n in enumerate(news[:15], 1):
+    for i, n in enumerate(news, 1):
         loc = n["loc"]
         where = "—" if not loc else loc["name"] + ("（推定）" if loc.get("approx") else "")
         lines.append(f"| {i} | {n['title'].replace('|', '/')} | {where} | {n['category']} |")
+    lines += ["", "| 銘柄 | 現在値 | 前日比 | 日付 |", "|---|---|---|---|"]
+    for quote in stocks["indices"] + stocks["jp"][:5] + stocks["us"][:5]:
+        mark = "（前回のデータ）" if quote.get("stale") else ""
+        lines.append(
+            f"| {quote['name']} ({quote['symbol']}){mark} | {quote['price']} | "
+            f"{quote['change']:+} ({quote['changePct']:+.2f}%) | {quote['history'][-1][0]} |"
+        )
     lines += ["", "<details><summary>ログ</summary>", "", *[f"- {line}" for line in log], "", "</details>"]
     text = "\n".join(lines) + "\n"
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")

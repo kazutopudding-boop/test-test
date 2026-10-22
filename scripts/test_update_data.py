@@ -57,6 +57,14 @@ class LocateTest(unittest.TestCase):
             "米アップル 新型iPhoneを発表": "us",
             "米FRB 利下げを決定": "us",
             "台風30号 東シナ海を北上": "ecs",
+            "メタに約4兆円支払い命令 米地裁": "us",
+            "米下院が予算案を可決": "us",
+            "日本人2人がヒマラヤ山脈で行方不明": "himalaya",
+            "大谷、常勝ドジャースに転機か―米大リーグ": "dodgers",
+            "欧州でかすむ中道路線": "europe",
+            "久保文明氏 米中間選挙、テキサスの共和党苦戦": "texas",
+            "英、サウジ防衛にタイフーン戦闘機を派遣へ": "sa",
+            "阪神タイガースが優勝": "hanshin",  # 「タイ」（国）とは読まない
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -70,7 +78,6 @@ class LocateTest(unittest.TestCase):
             "新米首相のもとで論戦",
             "豪雨被害 各地で続く",
             "タイミングを逃さない投資術",
-            "阪神タイガースが優勝",
             "ゼロ金利解除から1年",
             "テロ対策を強化",
             "米価が高止まり",
@@ -79,6 +86,8 @@ class LocateTest(unittest.TestCase):
             "独自の取り組み",
             "日中は気温が上がる見込み",
             "英語教育の見直し",
+            "中国語AIの攻撃性能を実演",
+            "株式相場見通し 欧米株高追い風も上値重い",
         ]
         for title in cases:
             with self.subTest(title=title):
@@ -149,6 +158,8 @@ class NewsTest(unittest.TestCase):
         self.assertEqual(first["source"], "日本経済新聞")
         self.assertEqual(first["published"], "2026-10-21T22:41:00Z")
         self.assertEqual(first["related"], 2)
+        # グーグルニュースの説明文（関連記事の一覧）は場所探しに使わない
+        self.assertEqual(first["summary"], "")
         self.assertEqual(items[1]["related"], 1)
 
     def test_build_news(self):
@@ -169,7 +180,7 @@ class NewsTest(unittest.TestCase):
         # 場所の手がかりがない国内ニュースは「日本（推定）」。媒体名の「中国新聞」を中国と間違えない
         self.assertTrue(pm["loc"]["approx"])
         self.assertEqual(pm["source"], "中国新聞")
-        self.assertEqual((europe["rank"], europe["loc"]["name"]), (None, "ブリュッセル"))
+        self.assertEqual((europe["rank"], europe["loc"]["name"]), (None, "ヨーロッパ"))
         self.assertIsNone(meeting["loc"])  # 場所が分からない国際ニュースは地球儀に載せない
 
     def test_seas_near_japan_stay_domestic(self):
@@ -235,6 +246,12 @@ class ChartTest(unittest.TestCase):
 
 
 class StocksTest(unittest.TestCase):
+    def test_short_company_name(self):
+        self.assertEqual(ud.short_company_name("Chipotle Mexican Grill, Inc."), "Chipotle Mexican Grill")
+        self.assertEqual(ud.short_company_name("AT&T Inc."), "AT&T")
+        self.assertEqual(ud.short_company_name("Skydance Corporation"), "Skydance")
+        self.assertEqual(ud.short_company_name("Alphabet Inc."), "Alphabet")
+
     def test_fallback_to_previous_when_requests_fail(self):
         original_get, original_sleep = ud.http_get, ud.time.sleep
         calls = []

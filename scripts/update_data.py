@@ -133,9 +133,11 @@ class Gazetteer:
             if match is None:
                 i += 1
                 continue
-            if not match[1].get("ignore"):
+            end = i + len(match[0])
+            # 「中国語」「ロシア語」のような言葉の名前は場所ではない
+            if not match[1].get("ignore") and text[end:end + 1] != "語":
                 found.append((i, match[1]))
-            i += len(match[0])
+            i = end
         return found
 
     def locate(self, *texts: str) -> dict | None:
@@ -210,8 +212,9 @@ def parse_rss(xml: bytes, default_source: str = "") -> list[dict]:
                 "url": url,
                 "source": source,
                 "published": published,
-                # 説明文に入っている媒体名（「北海道新聞」「中国新聞」など）は地名と間違えやすいので除く
-                "summary": _strip_tags(re.sub(r"<font[^>]*>.*?</font>", " ", description, flags=re.S)),
+                # 本文の要約（NHK など）だけを場所探しに使う。グーグルニュースの説明文は
+                # 関連記事の見出しと媒体名の一覧で、別の地名が混ざりやすいので使わない
+                "summary": "" if "<a " in description else _strip_tags(description),
                 # グーグルニュースは同じ話題の記事を <li> でまとめて載せる。多いほど注目度が高い。
                 "related": max(1, description.count("<li")),
             }
@@ -361,6 +364,13 @@ def _round(value: float, decimals: int) -> float:
     return int(rounded) if decimals == 0 else rounded
 
 
+def short_company_name(name: str) -> str:
+    """「Chipotle Mexican Grill, Inc.」→「Chipotle Mexican Grill」のように会社の種類を省く"""
+    for _ in range(2):
+        name = re.sub(r",?\s+(Inc\.?|Incorporated|Corporation|Corp\.?|Co\.?|Ltd\.?|plc|PLC|N\.V\.|S\.A\.|AG|SE|Holdings?|Group)$", "", name.strip())
+    return name
+
+
 def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> dict | None:
     """Yahoo のチャートデータから、現在値・前日比・日足の推移を取り出す。
 
@@ -408,7 +418,7 @@ def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> di
     change = price - previous
     return {
         "symbol": meta.get("symbol"),
-        "name": name or meta.get("shortName") or meta.get("symbol"),
+        "name": name or short_company_name(meta.get("shortName") or "") or meta.get("symbol"),
         "type": meta.get("instrumentType"),
         "unit": unit,
         "decimals": decimals,

@@ -1,0 +1,55 @@
+name: ダッシュボードの更新
+
+on:
+  # main に変更が入ったとき（main 以外のブランチでは、データが取れるかの確認だけ）
+  push:
+  # 1時間ごと（毎時17分）。GitHub が混んでいると数分〜数十分遅れることがあります
+  schedule:
+    - cron: "17 * * * *"
+  # Actions タブの「Run workflow」ボタンから手動でも動かせます
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: dashboard-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: スクリプトのテスト
+        run: python3 -m unittest discover -s scripts -v
+
+      - name: 公開中のサイトの URL を調べる
+        id: pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      - name: ニュースと株価を取得
+        run: python3 scripts/update_data.py --out site/data --previous "${{ steps.pages.outputs.base_url }}"
+
+      - name: 公開するファイルをまとめる
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages に公開
+        id: deployment
+        uses: actions/deploy-pages@v4

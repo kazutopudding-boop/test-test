@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ワールドダッシュボード</title>
+  <meta name="description" content="現在地の天気、世界のニュースを3Dの地球儀で、注目株の値動きを1ページで。">
+  <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌏%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js" defer></script>
+  <script type="module" src="assets/app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1 class="site-title"><span aria-hidden="true">🌏</span> ワールドダッシュボード</h1>
+    <p class="site-updated" id="updated"></p>
+  </header>
+
+  <main class="layout">
+    <section class="card weather" id="weather" aria-labelledby="weather-title">
+      <h2 id="weather-title">現在地の天気</h2>
+    </section>
+
+    <section class="news" id="news" aria-labelledby="news-title">
+      <div class="section-head">
+        <h2 id="news-title">世界のニュース</h2>
+        <p class="section-hint">ニュースを選ぶと、地球儀がその場所へ移動します。点を押すとその場所のニュースが出ます。</p>
+      </div>
+      <div class="news-filters"></div>
+      <div class="news-grid">
+        <div class="globe-panel">
+          <div id="globe" class="globe"></div>
+          <p class="globe-loading">地球儀を読み込み中…</p>
+          <ul class="globe-legend">
+            <li><span class="legend-dot legend-dot--news"></span>ニュースの場所 <span id="globe-count"></span></li>
+            <li><span class="legend-dot legend-dot--here"></span>現在地</li>
+          </ul>
+          <div id="globe-card" class="globe-card" hidden></div>
+        </div>
+        <div class="news-feed"></div>
+      </div>
+    </section>
+
+    <section class="card stocks" id="stocks" aria-labelledby="stocks-title">
+      <div class="section-head">
+        <h2 id="stocks-title">株価</h2>
+        <p class="section-hint">上がったものは赤、下がったものは青で表示しています。</p>
+      </div>
+      <div class="stocks-body"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      天気: <a href="https://open-meteo.com/">Open-Meteo</a>（CC BY 4.0）／
+      地名: <a href="https://www.bigdatacloud.com/">BigDataCloud</a>／
+      ニュース: <a href="https://news.google.com/?hl=ja&amp;gl=JP&amp;ceid=JP:ja">Google ニュース</a>／
+      株価: <a href="https://finance.yahoo.com/">Yahoo Finance</a>／
+      地球儀: <a href="https://github.com/vasturiano/globe.gl">globe.gl</a>・NASA Blue Marble
+    </p>
+    <p>ニュースの場所は見出しの地名から自動で推定しているため、ずれることがあります。株価は遅れて表示されます。投資の判断には使わないでください。</p>
+  </footer>
+</body>
+</html>

@@ -449,6 +449,8 @@ def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None) -> dict
             payload = json.loads(http_get(CHART_URL.format(host=host, symbol=quoted), attempts=2))
             quote = parse_chart(payload, name, unit, decimals)
             if quote:
+                # Yahoo は JPY=X を USDJPY=X と返すことがあるので、問い合わせた記号にそろえる
+                quote["symbol"] = symbol
                 return quote
             error = ValueError("データが空でした")
         except Exception as e:

@@ -1,7 +1,7 @@
 // 株価（指数・注目銘柄）のカードと、選んだ銘柄のグラフ
 
 import { h, formatNumber, formatSigned, formatDateTime, formatDay, direction } from './util.js';
-import { sparkline, LineChart } from './chart.js';
+import { sparkline, CandleChart, toCandle } from './chart.js';
 
 const RANGES = [
   ['1か月', 22],
@@ -44,14 +44,14 @@ export function initStocks(root) {
   let selected = '^N225';
   let range = '3か月';
   const chartBox = h('div', { class: 'chart-box' });
-  const chart = new LineChart(chartBox);
+  const chart = new CandleChart(chartBox);
 
   function all() {
     return data ? [...data.indices, ...data.jp, ...data.us] : [];
   }
 
   function tile(quote) {
-    const lastMonth = quote.history.slice(-22).map((p) => p[1]);
+    const lastMonth = quote.history.slice(-22).map((row) => toCandle(row).close);
     return h('button', {
       type: 'button',
       class: `tile${quote.symbol === selected ? ' is-selected' : ''}`,
@@ -79,10 +79,12 @@ export function initStocks(root) {
       return;
     }
     const days = RANGES.find(([name]) => name === range)[1];
-    const points = quote.history.slice(-Math.min(days, quote.history.length));
-    const first = points[0]?.[1];
-    const last = points.at(-1)?.[1];
-    const periodChange = first ? ((last - first) / first) * 100 : 0;
+    const start = Math.max(0, quote.history.length - days);
+    const rows = quote.history.slice(start);
+    // 期間の変化は、期間が始まる前日の終値と最新の終値を比べる
+    const before = start > 0 ? toCandle(quote.history[start - 1]).close : toCandle(rows[0]).open;
+    const last = rows.length ? toCandle(rows.at(-1)).close : before;
+    const periodChange = before ? ((last - before) / before) * 100 : 0;
 
     detail.replaceChildren(
       h('div', { class: 'detail-head' },
@@ -103,27 +105,32 @@ export function initStocks(root) {
           h('p', { class: 'detail-period' }, `${range}で `,
             h('span', { class: `delta ${direction(periodChange)}` }, `${formatSigned(periodChange, 2)}%`)))),
       chartBox,
-      table(quote, points),
+      table(quote, rows),
     );
-    chart.set(points, {
-      tone: direction(periodChange), unit: quote.unit, decimals: quote.decimals,
-      label: `${quote.name}の${range}の終値の推移`,
+    chart.set(rows, {
+      unit: quote.unit, decimals: quote.decimals, before: start > 0 ? before : null,
+      label: `${quote.name}の${range}のローソク足`,
     });
   }
 
-  function table(quote, points) {
-    const rows = points.slice(-20).reverse().map(([day, close], i, arr) => {
-      const before = arr[i + 1]?.[1];
+  function table(quote, history) {
+    const candles = history.slice(-21).map(toCandle);
+    const d = quote.decimals;
+    const rows = candles.slice(1).reverse().map((c, i, arr) => {
+      const before = (arr[i + 1] ?? candles[0]).close;
       return h('tr', {},
-        h('th', { scope: 'row' }, formatDay(day)),
-        h('td', {}, formatNumber(close, quote.decimals)),
-        h('td', { class: before ? `delta ${direction(close - before)}` : '' },
-          before ? `${formatSigned(((close - before) / before) * 100, 2)}%` : '—'));
+        h('th', { scope: 'row' }, formatDay(c.day)),
+        h('td', {}, formatNumber(c.open, d)),
+        h('td', {}, formatNumber(c.high, d)),
+        h('td', {}, formatNumber(c.low, d)),
+        h('td', {}, formatNumber(c.close, d)),
+        h('td', { class: `delta ${direction(c.close - before)}` },
+          `${formatSigned(((c.close - before) / before) * 100, 2)}%`));
     });
     return h('details', { class: 'detail-table' },
       h('summary', {}, '表で見る（直近20日）'),
       h('table', {},
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, '日付'), h('th', { scope: 'col' }, '終値'), h('th', { scope: 'col' }, '前日比'))),
+        h('thead', {}, h('tr', {}, ...['日付', '始値', '高値', '安値', '終値', '前日比'].map((t) => h('th', { scope: 'col' }, t)))),
         h('tbody', {}, rows)));
   }
 

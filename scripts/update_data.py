@@ -384,17 +384,25 @@ def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> di
     quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
     tz = dt.timezone(dt.timedelta(seconds=meta.get("gmtoffset") or 0))
 
-    daily: dict[str, float] = {}
-    for stamp, close in zip(result.get("timestamp") or [], quote.get("close") or []):
-        if close is not None:
-            daily[dt.datetime.fromtimestamp(stamp, tz).date().isoformat()] = close
-    history = sorted(daily.items())
+    # 日足（ローソク足）: 日付 → [始値, 高値, 安値, 終値]
+    bars: dict[str, list[float]] = {}
+    stamps = result.get("timestamp") or []
+    # 列が欠けていても日付の数に合わせる（足りない分は None）
+    columns = [(quote.get(k) or []) + [None] * len(stamps) for k in ("open", "high", "low", "close")]
+    for stamp, *ohlc in zip(stamps, *columns):
+        close = ohlc[3]
+        if close is None:
+            continue
+        # 始値などが欠けている日は終値で埋める
+        o, h, l = (v if v is not None else close for v in ohlc[:3])
+        bars[dt.datetime.fromtimestamp(stamp, tz).date().isoformat()] = [o, max(h, o, close), min(l, o, close), close]
+    history = sorted(bars.items())
 
     price = meta.get("regularMarketPrice")
     if price is None:
         if not history:
             return None
-        price = history[-1][1]
+        price = history[-1][1][3]
     market_time = meta.get("regularMarketTime")
     if market_time:
         market_day = dt.datetime.fromtimestamp(market_time, tz).date().isoformat()
@@ -404,16 +412,17 @@ def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> di
         return None
     # 日足の最後が「今日」なら1つ前が前日終値。最後が前日までなら、今日の値を付け足す。
     if history and history[-1][0] >= market_day:
-        history[-1] = (history[-1][0], price)
-        previous = history[-2][1] if len(history) >= 2 else meta.get("chartPreviousClose")
+        o, h, l, _ = history[-1][1]
+        history[-1] = (history[-1][0], [o, max(h, price), min(l, price), price])
+        previous = history[-2][1][3] if len(history) >= 2 else meta.get("chartPreviousClose")
     else:
-        previous = history[-1][1] if history else meta.get("chartPreviousClose")
-        history.append((market_day, price))
+        previous = history[-1][1][3] if history else meta.get("chartPreviousClose")
+        history.append((market_day, [price, price, price, price]))
     if not previous:
         return None
 
     if decimals is None:
-        recent = [close for _, close in history[-30:]] + [previous]
+        recent = [v for _, bar in history[-30:] for v in bar] + [previous]
         decimals = 0 if all(float(v).is_integer() for v in recent) else 1
     change = price - previous
     return {
@@ -427,7 +436,8 @@ def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> di
         "change": _round(change, decimals),
         "changePct": round(change / previous * 100, 2),
         "time": iso(dt.datetime.fromtimestamp(market_time, dt.timezone.utc)) if market_time else None,
-        "history": [[day, _round(close, decimals)] for day, close in history],
+        # [日付, 始値, 高値, 安値, 終値]
+        "history": [[day, *(_round(v, decimals) for v in bar)] for day, bar in history],
     }
 
 

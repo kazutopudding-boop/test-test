@@ -28,6 +28,22 @@ jobs:
       - name: スクリプトのテスト
         run: python3 -m unittest discover -s scripts -v
 
+      # 公開方法が「GitHub Actions」になっていないと公開できないので、分かりやすく知らせる
+      - name: GitHub Pages の設定を確認
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build_type=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>/dev/null || echo "未設定")
+          echo "GitHub Pages の公開方法: ${build_type}（workflow なら OK）"
+          if [ "$build_type" != "workflow" ]; then
+            message="Settings → Pages の「Source」を「GitHub Actions」にしてから、Actions タブの「Run workflow」でもう一度実行してください（今の設定: ${build_type}）"
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              echo "::error title=公開の設定が必要です::${message}"
+              exit 1
+            fi
+            echo "::warning title=公開の設定が必要です::${message}"
+          fi
+
       - name: 公開中のサイトの URL を調べる
         id: pages
         if: github.ref == 'refs/heads/main'

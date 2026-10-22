@@ -48,16 +48,24 @@ function decimalsFor(step) {
   return step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
 }
 
+/** 日足の1行（[日付, 始値, 高値, 安値, 終値] か、古いデータの [日付, 終値]）を読みやすい形にする */
+export function toCandle(row) {
+  const [day, ...values] = row;
+  const close = values.at(-1);
+  const [open, high, low] = values.length >= 4 ? values : [close, close, close];
+  return { day, open, high, low, close };
+}
+
 /**
- * 1本の折れ線グラフ。指やマウスを動かすと、その日の値と前日比が出る。
- * 左右キーでも日付を動かせる。
+ * ローソク足のグラフ。始値より終値が高い日（陽線）は赤、低い日（陰線）は青。
+ * 指やマウスを動かすと、その日の四本値と前日比が出る。左右キーでも日付を動かせる。
  */
-export class LineChart {
-  constructor(container, { unit = '', decimals = 2, label = '価格の推移' } = {}) {
+export class CandleChart {
+  constructor(container, { unit = '', decimals = 2, label = '株価の推移' } = {}) {
     this.container = container;
     this.unit = unit;
     this.decimals = decimals;
-    this.points = [];
+    this.candles = [];
     this.active = null;
     this.frame = h('div', {
       class: 'chart-frame', tabindex: '0', role: 'img', 'aria-label': `${label}（左右キーで日付を移動）`,
@@ -76,9 +84,10 @@ export class LineChart {
     this.resizer.observe(this.frame);
   }
 
-  set(points, { tone = 'flat', unit = this.unit, decimals = this.decimals, label } = {}) {
-    this.points = points;
-    this.tone = tone;
+  /** @param rows 日足の行。before は表示範囲の前日の終値（最初の足の前日比に使う） */
+  set(rows, { unit = this.unit, decimals = this.decimals, label, before = null } = {}) {
+    this.candles = rows.map(toCandle);
+    this.before = before;
     this.unit = unit;
     this.decimals = decimals;
     if (label) this.frame.setAttribute('aria-label', `${label}（左右キーで日付を移動）`);
@@ -86,27 +95,38 @@ export class LineChart {
     this.draw();
   }
 
+  previousClose(index) {
+    return index > 0 ? this.candles[index - 1].close : this.before;
+  }
+
   draw() {
     this.svg?.remove();
     const width = this.frame.clientWidth;
     const height = this.frame.clientHeight;
-    if (!width || this.points.length < 2) return;
+    const candles = this.candles;
+    if (!width || candles.length < 2) return;
 
-    const margin = { top: 14, right: 64, bottom: 28, left: 8 };
+    const last = candles.at(-1);
+    const lastText = formatNumber(last.close, this.decimals);
+    // 右側の目盛りと最新値のラベルが入る幅を、数字の長さから決める
+    const tagWidth = Math.ceil(12 + lastText.length * 7.2);
+    const margin = { top: 14, right: Math.max(56, tagWidth + 6), bottom: 28, left: 8 };
     const plotW = width - margin.left - margin.right;
     const plotH = height - margin.top - margin.bottom;
-    const values = this.points.map((p) => p[1]);
-    const pad = (Math.max(...values) - Math.min(...values)) * 0.08;
-    const lo = Math.min(...values) - pad;
-    const hi = Math.max(...values) + pad;
+    const max = Math.max(...candles.map((c) => c.high));
+    const min = Math.min(...candles.map((c) => c.low));
+    const pad = (max - min) * 0.06;
+    const lo = min - pad;
+    const hi = max + pad;
     const { ticks, step } = niceTicks(lo, hi);
-    const x = (i) => margin.left + (i / (this.points.length - 1)) * plotW;
+    const slot = plotW / candles.length;
+    const x = (i) => margin.left + (i + 0.5) * slot;
     const y = (v) => margin.top + (1 - (v - lo) / (hi - lo || 1)) * plotH;
-    this.geometry = { x, y, margin, plotW, width };
+    this.geometry = { x, margin, plotW, width, slot };
 
-    const root = svg('svg', { width, height, class: `chart chart--${this.tone}`, 'aria-hidden': 'true' });
+    const root = svg('svg', { width, height, class: 'chart', 'aria-hidden': 'true' });
     const tickDecimals = Math.max(decimalsFor(step), 0);
-    const lastY = y(values.at(-1));
+    const lastY = y(last.close);
 
     // 横の目盛り線と値（右側）。最新値のラベルと重なるものは省く
     for (const tick of ticks) {
@@ -120,53 +140,64 @@ export class LineChart {
     }
 
     // 日付の目盛り（5つくらい）
-    const count = Math.min(5, this.points.length);
+    const count = Math.min(5, candles.length);
     for (let k = 0; k < count; k++) {
-      const i = Math.round((k / (count - 1)) * (this.points.length - 1));
+      const i = Math.round((k / (count - 1)) * (candles.length - 1));
       const label = svg('text', {
         x: x(i), y: height - 8, class: 'chart-tick',
         'text-anchor': k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle',
       });
-      label.textContent = formatDay(this.points[i][0]).replace(/\(.\)/, '');
+      label.textContent = formatDay(candles[i].day).replace(/\(.\)/, '');
       root.append(label);
     }
 
-    const line = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
-    const bottom = margin.top + plotH;
-    root.append(
-      svg('path', { d: `${line}L${x(values.length - 1)},${bottom}L${x(0)},${bottom}Z`, class: 'chart-area' }),
-      svg('path', { d: line, class: 'chart-line' }),
-      svg('circle', { cx: x(values.length - 1), cy: lastY, r: 4, class: 'chart-dot' }),
-    );
+    this.cross = svg('line', { y1: margin.top, y2: margin.top + plotH, class: 'chart-cross', visibility: 'hidden' });
+    root.append(this.cross);
 
-    // 最新値のラベル（右端）
-    const tag = svg('g', { class: 'chart-last', transform: `translate(${margin.left + plotW + 4},${lastY})` });
-    const text = formatNumber(values.at(-1), this.decimals);
-    const tagWidth = Math.min(margin.right - 4, 10 + text.length * 7.2);
+    // ローソク足: ひげ（高値〜安値）と胴体（始値〜終値）。胴体は足の間隔の7割、最大14px
+    const body = Math.max(1, Math.min(14, slot * 0.7));
+    const candleGroup = svg('g', {});
+    candles.forEach((c, i) => {
+      const tone = c.close > c.open ? 'up' : c.close < c.open ? 'down' : 'flat';
+      const cx = x(i);
+      const top = y(Math.max(c.open, c.close));
+      const g = svg('g', { class: `candle candle--${tone}` });
+      g.append(
+        svg('line', { x1: cx, x2: cx, y1: y(c.high), y2: y(c.low), class: 'candle-wick' }),
+        svg('rect', {
+          x: cx - body / 2, y: top, width: body,
+          height: Math.max(1, y(Math.min(c.open, c.close)) - top), class: 'candle-body',
+        }),
+      );
+      candleGroup.append(g);
+    });
+    root.append(candleGroup);
+
+    // 最新値のラベル（右端）。色は前日比の向き
+    const before = this.previousClose(candles.length - 1);
+    const lastTone = before == null ? 'flat' : last.close > before ? 'up' : last.close < before ? 'down' : 'flat';
+    const tag = svg('g', { class: `chart-last chart-last--${lastTone}`, transform: `translate(${margin.left + plotW + 4},${lastY})` });
     tag.append(svg('rect', { x: 0, y: -10, width: tagWidth, height: 20, rx: 4 }));
     const tagText = svg('text', { x: tagWidth / 2, y: 0, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
-    tagText.textContent = text;
+    tagText.textContent = lastText;
     tag.append(tagText);
     root.append(tag);
 
-    this.cross = svg('line', { y1: margin.top, y2: bottom, class: 'chart-cross', visibility: 'hidden' });
-    this.marker = svg('circle', { r: 4, class: 'chart-dot', visibility: 'hidden' });
-    root.append(this.cross, this.marker);
     this.svg = root;
     this.frame.prepend(root);
     if (this.active != null) this.setActive(this.active);
   }
 
   pointAt(event) {
-    if (!this.geometry || this.points.length < 2) return;
+    if (!this.geometry || this.candles.length < 2) return;
     const rect = this.frame.getBoundingClientRect();
-    const { margin, plotW } = this.geometry;
-    const ratio = (event.clientX - rect.left - margin.left) / plotW;
-    this.setActive(Math.round(Math.min(1, Math.max(0, ratio)) * (this.points.length - 1)));
+    const { margin, slot } = this.geometry;
+    const index = Math.floor((event.clientX - rect.left - margin.left) / slot);
+    this.setActive(Math.min(this.candles.length - 1, Math.max(0, index)));
   }
 
   onKey(event) {
-    const last = this.points.length - 1;
+    const last = this.candles.length - 1;
     const keys = { ArrowLeft: -1, ArrowRight: 1 };
     if (event.key in keys) {
       this.setActive(Math.min(last, Math.max(0, (this.active ?? last) + keys[event.key])));
@@ -182,26 +213,25 @@ export class LineChart {
     if (!this.cross) return;
     if (index == null) {
       this.cross.setAttribute('visibility', 'hidden');
-      this.marker.setAttribute('visibility', 'hidden');
       this.tooltip.hidden = true;
       return;
     }
-    const { x, y, width } = this.geometry;
-    const [day, value] = this.points[index];
+    const { x, width } = this.geometry;
+    const c = this.candles[index];
     const cx = x(index);
     this.cross.setAttribute('x1', cx);
     this.cross.setAttribute('x2', cx);
     this.cross.setAttribute('visibility', 'visible');
-    this.marker.setAttribute('cx', cx);
-    this.marker.setAttribute('cy', y(value));
-    this.marker.setAttribute('visibility', 'visible');
 
-    const before = index > 0 ? this.points[index - 1][1] : null;
-    const change = before ? h('span', { class: `tip-change ${value >= before ? (value > before ? 'up' : 'flat') : 'down'}` },
-      `前日比 ${formatSigned(value - before, this.decimals)} (${formatSigned(((value - before) / before) * 100, 2)}%)`) : null;
+    const before = this.previousClose(index);
+    const d = this.decimals;
+    const change = before ? h('span', { class: `tip-change ${c.close > before ? 'up' : c.close < before ? 'down' : 'flat'}` },
+      `前日比 ${formatSigned(c.close - before, d)} (${formatSigned(((c.close - before) / before) * 100, 2)}%)`) : null;
     this.tooltip.replaceChildren(...[
-      h('strong', { class: 'tip-value' }, formatNumber(value, this.decimals), this.unit && h('small', {}, this.unit)),
-      h('span', { class: 'tip-date' }, formatDay(day)),
+      h('strong', { class: 'tip-value' }, formatNumber(c.close, d), this.unit && h('small', {}, this.unit)),
+      h('span', { class: 'tip-date' }, `${formatDay(c.day)} 終値`),
+      h('span', { class: 'tip-ohlc' },
+        `始 ${formatNumber(c.open, d)}　高 ${formatNumber(c.high, d)}　安 ${formatNumber(c.low, d)}`),
       change,
     ].filter(Boolean));
     this.tooltip.hidden = false;

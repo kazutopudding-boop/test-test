@@ -190,7 +190,7 @@ class NewsTest(unittest.TestCase):
         self.assertEqual((typhoon["category"], typhoon["loc"]["name"]), ("国内", "東シナ海"))
 
 
-def chart_payload(timestamps, closes, price, market_time, symbol="7203.T", offset=32400):
+def chart_payload(timestamps, closes, price, market_time, symbol="7203.T", offset=32400, ohlc=None):
     return {
         "chart": {
             "result": [
@@ -204,7 +204,7 @@ def chart_payload(timestamps, closes, price, market_time, symbol="7203.T", offse
                         "instrumentType": "EQUITY",
                     },
                     "timestamp": timestamps,
-                    "indicators": {"quote": [{"close": closes}]},
+                    "indicators": {"quote": [{"close": closes, **(ohlc or {})}]},
                 }
             ],
             "error": None,
@@ -225,15 +225,23 @@ class ChartTest(unittest.TestCase):
         self.assertEqual(quote["change"], 50)
         self.assertEqual(quote["changePct"], 1.75)
         self.assertEqual(quote["decimals"], 0)
-        self.assertEqual(quote["history"][-1], ["2026-10-21", 2900])
+        # 始値などがない日は終値で埋め、今日の足は現在値まで伸ばす
+        self.assertEqual(quote["history"][-1], ["2026-10-21", 2870, 2900, 2870, 2900])
 
     def test_today_missing_from_daily_bars(self):
         payload = chart_payload(DAYS[:2], [2800.0, 2850.5], 2830.0, DAYS[2] + 3600)
         quote = ud.parse_chart(payload, "トヨタ自動車", "円", None)
         self.assertEqual(quote["prev"], 2850.5)
         self.assertEqual(quote["decimals"], 1)
-        self.assertEqual(quote["history"][-1], ["2026-10-21", 2830.0])
+        self.assertEqual(quote["history"][-1], ["2026-10-21", 2830.0, 2830.0, 2830.0, 2830.0])
         self.assertEqual(len(quote["history"]), 3)
+
+    def test_candles(self):
+        ohlc = {"open": [2790.0, 2860.0, 2850.0], "high": [2820.0, 2880.0, 2890.0], "low": [2780.0, 2840.0, 2845.0]}
+        payload = chart_payload(DAYS, [2800.0, 2850.0, 2870.0], 2880.0, DAYS[2] + 3600, ohlc=ohlc)
+        quote = ud.parse_chart(payload, "", "円", None)
+        self.assertEqual(quote["history"][0], ["2026-10-19", 2790, 2820, 2780, 2800])
+        self.assertEqual(quote["history"][-1], ["2026-10-21", 2850, 2890, 2845, 2880])
 
     def test_skips_missing_closes(self):
         payload = chart_payload(DAYS, [2800.0, None, 2870.0], 2870.0, DAYS[2] + 3600)

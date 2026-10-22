@@ -98,7 +98,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .site-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 4px 16px;
   padding-top: 20px;
@@ -107,6 +107,22 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .site-title { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
 .site-updated { color: var(--ink-2); font-size: 13px; }
+
+.site-nav { display: flex; gap: 6px; margin-right: auto; }
+.site-nav a {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 14px;
+  text-decoration: none;
+}
+.site-nav a:hover { background: var(--surface-2); color: var(--ink); }
+
+/* ページ内リンクで飛んだとき、見出しが画面の端にくっつかないように */
+section[id] { scroll-margin-top: 12px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 .layout {
   display: grid;
@@ -584,14 +600,13 @@ a.globe-card-title::after { content: " ↗"; font-size: 13px; color: var(--space
 }
 .chart-frame:focus-visible { outline-offset: 4px; }
 .chart { display: block; overflow: visible; }
-.chart--up { --tone: var(--up); }
-.chart--down { --tone: var(--down); }
-.chart--flat { --tone: var(--ink-2); }
+.candle--up, .chart-last--up { --tone: var(--up); }
+.candle--down, .chart-last--down { --tone: var(--down); }
+.candle--flat, .chart-last--flat { --tone: var(--ink-2); }
+.candle-wick { stroke: var(--tone); stroke-width: 1; shape-rendering: crispEdges; }
+.candle-body { fill: var(--tone); }
 .chart-grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
 .chart-tick { fill: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
-.chart-line { fill: none; stroke: var(--tone); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.chart-area { fill: var(--tone); opacity: 0.1; }
-.chart-dot { fill: var(--tone); stroke: var(--surface); stroke-width: 2; }
 .chart-cross { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
 .chart-last rect { fill: var(--tone); }
 .chart-last text { fill: var(--on-tone); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -612,12 +627,12 @@ a.globe-card-title::after { content: " ↗"; font-size: 13px; color: var(--space
 }
 .tip-value { font-size: 15px; font-variant-numeric: tabular-nums; }
 .tip-value small { font-size: 11px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
-.tip-date { color: var(--ink-2); }
+.tip-date, .tip-ohlc { color: var(--ink-2); }
 .tip-change.up { color: var(--up); }
 .tip-change.down { color: var(--down); }
 .tip-change.flat { color: var(--ink-2); }
 
-.detail-table { margin-top: 12px; }
+.detail-table { margin-top: 12px; overflow-x: auto; }
 .detail-table summary { cursor: pointer; color: var(--ink-2); font-size: 13px; padding: 6px 0; width: fit-content; }
 .detail-table table { border-collapse: collapse; margin-top: 6px; font-size: 13px; font-variant-numeric: tabular-nums; min-width: min(360px, 100%); }
 .detail-table th, .detail-table td { padding: 4px 16px 4px 0; text-align: right; border-bottom: 1px solid var(--grid); }

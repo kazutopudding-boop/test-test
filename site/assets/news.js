@@ -4,6 +4,8 @@ import { h, safeUrl, formatAgo } from './util.js';
 
 const CATEGORIES = ['すべて', '国内', '国際', '経済'];
 const NEW_MINUTES = 60;
+// 最初に並べる件数（残りは「さらに表示」で出す。株価まで長くスクロールしなくて済むように）
+const SHOW_FIRST = 10;
 
 function placeKey(loc) {
   return `${loc.lat.toFixed(2)},${loc.lng.toFixed(2)}`;
@@ -40,13 +42,15 @@ export function initNews(root, globe) {
   const status = h('p', { class: 'news-status' });
   const top = h('div', { class: 'top-story' });
   const list = h('ol', { class: 'news-list' });
+  const more = h('button', { type: 'button', class: 'button-quiet more', hidden: true });
   const card = root.querySelector('#globe-card');
   const legendCount = root.querySelector('#globe-count');
   root.querySelector('.news-filters').append(filters);
-  root.querySelector('.news-feed').append(status, top, list);
+  root.querySelector('.news-feed').append(status, top, list, more);
 
   let items = [];
   let filter = 'すべて';
+  let expanded = false;
   let selectedId = null;
   let places = [];
 
@@ -63,6 +67,7 @@ export function initNews(root, globe) {
         'aria-pressed': String(name === filter),
         onclick: () => {
           filter = name;
+          expanded = false;
           if (selectedId && !visible().some((i) => i.id === selectedId)) selectedId = null;
           render();
         },
@@ -117,8 +122,16 @@ export function initNews(root, globe) {
       h('p', { class: 'top-story-label', id: 'top-story-label' }, 'いちばんのニュース'),
       row(headline, { hero: true }),
     ] : []));
-    list.replaceChildren(...shown.filter((i) => i !== headline).map((item) => row(item)));
+    const rest = shown.filter((i) => i !== headline);
+    list.replaceChildren(...(expanded ? rest : rest.slice(0, SHOW_FIRST)).map((item) => row(item)));
     if (!shown.length) list.replaceChildren(h('li', { class: 'empty' }, 'この分類のニュースはありません'));
+    more.hidden = rest.length <= SHOW_FIRST;
+    more.textContent = expanded ? '少なく表示' : `さらに表示（残り${rest.length - SHOW_FIRST}件）`;
+    more.onclick = () => {
+      expanded = !expanded;
+      renderList();
+      if (!expanded) list.scrollIntoView({ block: 'nearest' });
+    };
   }
 
   function renderCard() {

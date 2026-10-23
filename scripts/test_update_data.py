@@ -249,11 +249,48 @@ class ChartTest(unittest.TestCase):
         self.assertEqual(quote["prev"], 2800.0)
         self.assertEqual(quote["name"], "7203.T")
 
+    def test_intraday(self):
+        payload = chart_payload(
+            [1792540800, 1792541700, 1792542600], [2850.0, None, 2870.0], 2870.0, 1792542600,
+            ohlc={"open": [2840.0, None, 2850.0], "high": [2855.0, None, 2875.0], "low": [2835.0, None, None]},
+        )
+        intraday = ud.parse_intraday(payload, 0)
+        self.assertEqual(intraday["interval"], 900)
+        self.assertEqual(intraday["offset"], 32400)
+        # 終値のない足は飛ばし、欠けた安値は終値などで埋める
+        self.assertEqual(intraday["bars"], [[1792540800, 2840, 2855, 2835, 2850], [1792542600, 2850, 2875, 2850, 2870]])
+        self.assertIsNone(ud.parse_intraday({"chart": {"result": []}}, 0))
+
     def test_empty(self):
         self.assertIsNone(ud.parse_chart({"chart": {"result": None, "error": {}}}, "", "", 2))
 
 
 class StocksTest(unittest.TestCase):
+    def test_stops_asking_for_15_minute_bars_after_failures(self):
+        original_get, original_sleep = ud.http_get, ud.time.sleep
+        intraday_calls = []
+
+        def fake(url, **kwargs):
+            if "interval=15m" in url:
+                intraday_calls.append(url)
+                raise TimeoutError("timed out")
+            if "trending" in url:
+                return b'{"finance": {"result": [{"quotes": []}]}}'
+            return json.dumps(chart_payload(DAYS, [2800.0, 2850.0, 2870.0], 2870.0, DAYS[2] + 3600)).encode()
+
+        ud.http_get = fake
+        ud.time.sleep = lambda seconds: None
+        try:
+            old_bars = {"interval": 900, "offset": 0, "bars": [[1, 1, 1, 1, 1]]}
+            stocks = ud.fetch_stocks({"indices": [{"symbol": "^DJI", "intraday": old_bars}]}, [])
+        finally:
+            ud.http_get, ud.time.sleep = original_get, original_sleep
+        # 3回続けて失敗したら、残りの銘柄では15分足を取りに行かない
+        self.assertEqual(len(intraday_calls), 3)
+        self.assertEqual(len(stocks["jp"]), len(ud.JP_STOCKS))
+        # 取れなかった銘柄は前回の15分足を使う
+        self.assertEqual(next(q for q in stocks["indices"] if q["symbol"] == "^DJI")["intraday"], old_bars)
+
     def test_short_company_name(self):
         self.assertEqual(ud.short_company_name("Chipotle Mexican Grill, Inc."), "Chipotle Mexican Grill")
         self.assertEqual(ud.short_company_name("AT&T Inc."), "AT&T")

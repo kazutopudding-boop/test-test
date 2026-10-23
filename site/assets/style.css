@@ -717,3 +717,4 @@ a.globe-card-title::after { content: " ↗"; font-size: 13px; color: var(--space
   .tile-price.flash-up, .tile-price.flash-down { animation: none; }
 }
 .tile-name .badge, .tile-name .live-badge { flex: none; white-space: nowrap; }
+.chart-note { margin-top: 12px; font-size: 13px; color: var(--ink-2); }

@@ -85,8 +85,17 @@ export class CandleChart {
   }
 
   /** @param rows 日足の行。before は表示範囲の前日の終値（最初の足の前日比に使う） */
-  set(rows, { unit = this.unit, decimals = this.decimals, label, before = null, keepActive = false } = {}) {
+  /**
+   * labelOf / tickOf: 足の日付（"2026-10-22" か UNIX 秒）を、ツールチップ用・目盛り用の文字にする関数。
+   * changeLabel: ツールチップで1つ前の足と比べた変化の呼び名（日足なら「前日比」）
+   */
+  set(rows, {
+    unit = this.unit, decimals = this.decimals, label, before = null, keepActive = false,
+    labelOf = (day) => `${formatDay(day)} 終値`, tickOf = (day) => formatDay(day).replace(/\(.\)/, ''),
+    changeLabel = '前日比',
+  } = {}) {
     this.candles = rows.map(toCandle);
+    Object.assign(this, { labelOf, tickOf, changeLabel });
     this.before = before;
     this.unit = unit;
     this.decimals = decimals;
@@ -105,7 +114,7 @@ export class CandleChart {
     const width = this.frame.clientWidth;
     const height = this.frame.clientHeight;
     const candles = this.candles;
-    if (!width || candles.length < 2) return;
+    if (!width || !candles.length) return;
 
     const last = candles.at(-1);
     const lastText = formatNumber(last.close, this.decimals);
@@ -116,7 +125,7 @@ export class CandleChart {
     const plotH = height - margin.top - margin.bottom;
     const max = Math.max(...candles.map((c) => c.high));
     const min = Math.min(...candles.map((c) => c.low));
-    const pad = (max - min) * 0.06;
+    const pad = (max - min) * 0.06 || Math.abs(max) * 0.005 || 1;
     const lo = min - pad;
     const hi = max + pad;
     const { ticks, step } = niceTicks(lo, hi);
@@ -143,12 +152,12 @@ export class CandleChart {
     // 日付の目盛り（5つくらい）
     const count = Math.min(5, candles.length);
     for (let k = 0; k < count; k++) {
-      const i = Math.round((k / (count - 1)) * (candles.length - 1));
+      const i = count > 1 ? Math.round((k / (count - 1)) * (candles.length - 1)) : 0;
       const label = svg('text', {
         x: x(i), y: height - 8, class: 'chart-tick',
-        'text-anchor': k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle',
+        'text-anchor': count === 1 ? 'middle' : k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle',
       });
-      label.textContent = formatDay(candles[i].day).replace(/\(.\)/, '');
+      label.textContent = this.tickOf(candles[i].day);
       root.append(label);
     }
 
@@ -190,7 +199,7 @@ export class CandleChart {
   }
 
   pointAt(event) {
-    if (!this.geometry || this.candles.length < 2) return;
+    if (!this.geometry || !this.candles.length) return;
     const rect = this.frame.getBoundingClientRect();
     const { margin, slot } = this.geometry;
     const index = Math.floor((event.clientX - rect.left - margin.left) / slot);
@@ -227,10 +236,10 @@ export class CandleChart {
     const before = this.previousClose(index);
     const d = this.decimals;
     const change = before ? h('span', { class: `tip-change ${c.close > before ? 'up' : c.close < before ? 'down' : 'flat'}` },
-      `前日比 ${formatSigned(c.close - before, d)} (${formatSigned(((c.close - before) / before) * 100, 2)}%)`) : null;
+      `${this.changeLabel} ${formatSigned(c.close - before, d)} (${formatSigned(((c.close - before) / before) * 100, 2)}%)`) : null;
     this.tooltip.replaceChildren(...[
       h('strong', { class: 'tip-value' }, formatNumber(c.close, d), this.unit && h('small', {}, this.unit)),
-      h('span', { class: 'tip-date' }, `${formatDay(c.day)} 終値`),
+      h('span', { class: 'tip-date' }, this.labelOf(c.day)),
       h('span', { class: 'tip-ohlc' },
         `始 ${formatNumber(c.open, d)}　高 ${formatNumber(c.high, d)}　安 ${formatNumber(c.low, d)}`),
       change,

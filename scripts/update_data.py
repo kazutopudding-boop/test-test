@@ -301,6 +301,9 @@ def fetch_news(gazetteer: Gazetteer, log: list[str]) -> list[dict]:
 # 株価（Yahoo Finance の公開チャートデータ）
 
 CHART_URL = "https://{host}.finance.yahoo.com/v8/finance/chart/{symbol}?range=6mo&interval=1d"
+# 「1日」「5日」のグラフ用。直近5営業日の15分足
+INTRADAY_URL = "https://{host}.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=15m"
+INTRADAY_SECONDS = 15 * 60
 TRENDING_URL = "https://query1.finance.yahoo.com/v1/finance/trending/US?count=20"
 
 INDICES = [
@@ -441,7 +444,33 @@ def parse_chart(payload: dict, name: str, unit: str, decimals: int | None) -> di
     }
 
 
-def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None) -> dict:
+def parse_intraday(payload: dict, decimals: int) -> dict | None:
+    """15分足を {interval, offset, bars: [[時刻(秒), 始値, 高値, 安値, 終値], ...]} にする。"""
+    results = (payload.get("chart") or {}).get("result") or []
+    if not results:
+        return None
+    result = results[0]
+    quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+    stamps = result.get("timestamp") or []
+    columns = [(quote.get(k) or []) + [None] * len(stamps) for k in ("open", "high", "low", "close")]
+    bars = []
+    for stamp, *ohlc in zip(stamps, *columns):
+        close = ohlc[3]
+        if close is None:
+            continue
+        o, h, l = (v if v is not None else close for v in ohlc[:3])
+        bars.append([stamp, *(_round(v, decimals) for v in (o, max(h, o, close), min(l, o, close), close))])
+    if not bars:
+        return None
+    return {
+        "interval": INTRADAY_SECONDS,
+        # 取引所の時差（秒）。どの足が同じ日の取引かを見分けるのに使う
+        "offset": (result.get("meta") or {}).get("gmtoffset") or 0,
+        "bars": bars,
+    }
+
+
+def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None, intraday: bool = True) -> dict:
     quoted = urllib.parse.quote(symbol, safe="")
     error: Exception | None = None
     for host in ("query1", "query2"):
@@ -451,6 +480,16 @@ def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None) -> dict
             if quote:
                 # Yahoo は JPY=X を USDJPY=X と返すことがあるので、問い合わせた記号にそろえる
                 quote["symbol"] = symbol
+                # 15分足は取れなくても日足だけで表示できるので、失敗しても止めない。
+                # 待たされると全体が長引くので、1回だけ・短い時間で諦める
+                quote["intraday"] = None
+                if intraday:
+                    try:
+                        time.sleep(0.3)
+                        payload = json.loads(http_get(INTRADAY_URL.format(host=host, symbol=quoted), timeout=8, attempts=1))
+                        quote["intraday"] = parse_intraday(payload, quote["decimals"])
+                    except Exception:
+                        pass
                 return quote
             error = ValueError("データが空でした")
         except Exception as e:
@@ -479,14 +518,21 @@ def fetch_stocks(previous: dict | None, log: list[str]) -> dict:
             old[quote["symbol"]] = quote
 
     failures_in_a_row = 0
+    intraday_failures = 0
 
     def get(symbol: str, name: str, unit: str, decimals: int | None) -> dict | None:
-        nonlocal failures_in_a_row
+        nonlocal failures_in_a_row, intraday_failures
         if failures_in_a_row < 4:  # 何度も続けて失敗したら、相手が混雑しているので取得をやめる
             time.sleep(0.4)  # 相手のサーバーに負担をかけないよう、少し間をあける
             try:
-                quote = fetch_quote(symbol, name, unit, decimals)
+                quote = fetch_quote(symbol, name, unit, decimals, intraday=intraday_failures < 3)
                 failures_in_a_row = 0
+                if quote["intraday"]:
+                    intraday_failures = 0
+                else:
+                    intraday_failures += 1
+                    # 15分足が取れなかったときは、前回の15分足を使う
+                    quote["intraday"] = old.get(symbol, {}).get("intraday")
                 return quote
             except Exception as e:
                 failures_in_a_row += 1
@@ -516,6 +562,8 @@ def fetch_stocks(previous: dict | None, log: list[str]) -> dict:
     for quote in indices + jp + us:
         quote.pop("type", None)
     log.append(f"株価: 指数 {len(indices)} / 日本株 {len(jp)} / 米国株 {len(us)}")
+    with_bars = sum(1 for q in indices + jp + us if q.get("intraday"))
+    log.append(f"15分足（1日・5日のグラフ用）: {with_bars} / {len(indices) + len(jp) + len(us)}銘柄")
     return {"indices": indices, "jp": jp, "us": us}
 
 

@@ -85,13 +85,14 @@ export class CandleChart {
   }
 
   /** @param rows 日足の行。before は表示範囲の前日の終値（最初の足の前日比に使う） */
-  set(rows, { unit = this.unit, decimals = this.decimals, label, before = null } = {}) {
+  set(rows, { unit = this.unit, decimals = this.decimals, label, before = null, keepActive = false } = {}) {
     this.candles = rows.map(toCandle);
     this.before = before;
     this.unit = unit;
     this.decimals = decimals;
     if (label) this.frame.setAttribute('aria-label', `${label}（左右キーで日付を移動）`);
-    this.active = null;
+    // リアルタイム更新のときは、指で選んでいる日付をそのまま残す
+    if (!keepActive || this.active >= this.candles.length) this.active = null;
     this.draw();
   }
 

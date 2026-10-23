@@ -4,8 +4,11 @@ import { h, formatNumber, formatSigned, formatDateTime, formatDay, direction } f
 import { sparkline, CandleChart, toCandle } from './chart.js';
 import { LiveFeed } from './live.js';
 
-// 期間の切り替え。1日・5日は15分足、それより長い期間は日足
+// 期間の切り替え。5秒足・1分足は Finnhub 接続中の米国株だけ（届いた取引からその場で作る）。
+// 1日・5日は15分足、それより長い期間は日足
 const RANGES = [
+  { name: '5秒足', tick: 5 },
+  { name: '1分足', tick: 60 },
   { name: '1日', intraday: 'day' },
   { name: '5日', intraday: 'all' },
   { name: '1か月', days: 22 },
@@ -13,6 +16,9 @@ const RANGES = [
   { name: '6か月', days: Infinity },
 ];
 const BAR_SECONDS = 15 * 60;
+const TICK_SIZES = [5, 60];
+const MAX_TICK_BARS = 120; // 5秒足なら直近10分、1分足なら直近2時間
+const clockSeconds = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const hourMinute = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit' });
 const WEEKDAYS = '日月火水木金土';
 /** UNIX 秒 → "10/22(水) 23:45"（見ている人の時刻で表示） */
@@ -96,15 +102,31 @@ export function initStocks(root) {
 
   const liveCandles = new Map(); // 銘柄 → 最新の日足（データを読み直しても重ね直せるよう覚えておく）
   const liveBars = new Map(); // 銘柄 → (15分足の開始時刻 → 足) 受け取った取引から作った15分足
+  const tickBars = new Map(); // 銘柄 → { 5: (開始時刻 → 足), 60: (開始時刻 → 足) } 5秒足と1分足
 
-  function addTrade(symbol, time, value) {
-    const start = Math.floor(time / 1000 / BAR_SECONDS) * BAR_SECONDS;
-    if (!liveBars.has(symbol)) liveBars.set(symbol, new Map());
-    const bars = liveBars.get(symbol);
+  /** 取引1件を、size 秒ごとの足の集まり（開始時刻 → 足）に足し込む */
+  function addToBars(bars, size, time, value) {
+    const start = Math.floor(time / 1000 / size) * size;
     const bar = bars.get(start);
     bars.set(start, bar
       ? [start, bar[1], Math.max(bar[2], value), Math.min(bar[3], value), value]
       : [start, value, value, value, value]);
+  }
+
+  function addTrade(symbol, time, value) {
+    if (!liveBars.has(symbol)) liveBars.set(symbol, new Map());
+    addToBars(liveBars.get(symbol), BAR_SECONDS, time, value);
+    if (!tickBars.has(symbol)) tickBars.set(symbol, Object.fromEntries(TICK_SIZES.map((size) => [size, new Map()])));
+    for (const size of TICK_SIZES) {
+      const bars = tickBars.get(symbol)[size];
+      addToBars(bars, size, time, value);
+      // 古い足から捨てて、本数を一定に保つ（Map は入れた順に並ぶ）
+      while (bars.size > MAX_TICK_BARS) bars.delete(bars.keys().next().value);
+    }
+  }
+
+  function isLiveSymbol(symbol) {
+    return feed.connected && Boolean(data?.us.some((q) => q.symbol === symbol));
   }
 
   /** 受け取った取引の15分足を、1時間ごとのデータの15分足に重ねる */
@@ -134,14 +156,20 @@ export function initStocks(root) {
       lastTrade = Math.max(lastTrade ?? 0, candle.time);
     },
     onStatus(state, message) {
+      const wasLive = liveState === 'live';
       liveState = state;
       liveMessage = message;
       if (state === 'idle' || state === 'error') {
         liveCandles.clear();
         liveBars.clear();
+        tickBars.clear();
         lastTrade = null;
+        if (RANGES.find((r) => r.name === range)?.tick) range = '1日';
       }
+      // つながったら、米国株を選んでいれば5秒足に切り替える
+      if (state === 'live' && !wasLive && isLiveSymbol(selected)) range = '5秒足';
       renderLivePanel();
+      if (data) renderDetail();
     },
   });
 
@@ -235,6 +263,8 @@ export function initStocks(root) {
       dataset: { symbol: quote.symbol },
       onclick: () => {
         selected = quote.symbol;
+        // 接続中に米国株を選んだら、最初は5秒足で見せる（期間を自分で変えていたらそのまま）
+        if (range === '1日' && isLiveSymbol(quote.symbol)) range = '5秒足';
         render();
         if (matchMedia('(max-width: 720px)').matches) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       },
@@ -251,8 +281,32 @@ export function initStocks(root) {
 
   // ---------- 選んだ銘柄の詳細 ----------
 
+  /** その銘柄で選べる期間（5秒足・1分足は Finnhub 接続中の米国株だけ） */
+  function rangesFor(quote) {
+    return RANGES.filter((r) => !r.tick || isLiveSymbol(quote.symbol));
+  }
+
   function detailNumbers(quote) {
-    const choice = RANGES.find((r) => r.name === range);
+    let choice = rangesFor(quote).find((r) => r.name === range);
+    if (!choice) {
+      range = '1日';
+      choice = RANGES.find((r) => r.name === range);
+    }
+    if (choice.tick) {
+      const rows = [...(tickBars.get(quote.symbol)?.[choice.tick]?.values() ?? [])].sort((a, b) => a[0] - b[0]);
+      const base = rows.length ? rows[0][1] : null;
+      const lastClose = rows.length ? rows.at(-1)[4] : null;
+      const periodChange = base && lastClose != null ? ((lastClose - base) / base) * 100 : 0;
+      const time = (t) => clockSeconds.format(new Date(t * 1000));
+      const format = {
+        rowLabel: time, header: '時刻', changeLabel: '前の足から',
+        tableTitle: `表で見る（直近20本・${range}）`,
+        periodLabel: '表示中の足で ',
+        emptyNote: '取引が届くと、ここに足が増えていきます（米国市場の取引時間外は動きません）',
+        chart: { labelOf: time, tickOf: time, changeLabel: '前の足から' },
+      };
+      return { rows, before: null, periodChange, format };
+    }
     if (choice.intraday) {
       const { bars = [], offset = 0 } = quote.intraday ?? {};
       let rows = bars;
@@ -275,6 +329,7 @@ export function initStocks(root) {
       };
       return { rows, before: choice.intraday === 'day' ? base : null, periodChange, format };
     }
+    // ここから日足
     const days = choice.days;
     const start = Math.max(0, quote.history.length - days);
     const rows = quote.history.slice(start);
@@ -304,7 +359,8 @@ export function initStocks(root) {
       time: h('p', { class: 'detail-time' }, timeText(quote)),
       period: h('span', { class: `delta ${direction(periodChange)}` }, `${formatSigned(periodChange, 2)}%`),
       table: table(quote, rows, format),
-      chartNote: h('p', { class: 'chart-note', hidden: rows.length > 0 }, '日中の値動きのデータがまだありません（次の更新で表示されます）'),
+      chartNote: h('p', { class: 'chart-note', hidden: rows.length > 0 }, format.emptyNote ?? '日中の値動きのデータがまだありません（次の更新で表示されます）'),
+      periodLabel: h('span', {}, format.periodLabel ?? `${range}で `),
     };
     detail.replaceChildren(
       h('div', { class: 'detail-head' },
@@ -316,11 +372,11 @@ export function initStocks(root) {
           detailParts.time),
         h('div', { class: 'detail-controls' },
           h('div', { class: 'filters', role: 'group', 'aria-label': '期間' },
-            RANGES.map(({ name }) => h('button', {
-              type: 'button', class: 'chip-button', 'aria-pressed': String(name === range),
+            rangesFor(quote).map(({ name, tick }) => h('button', {
+              type: 'button', class: `chip-button${tick ? ' chip-button--live' : ''}`, 'aria-pressed': String(name === range),
               onclick: () => { range = name; renderDetail(); },
             }, name))),
-          h('p', { class: 'detail-period' }, `${range}で `, detailParts.period))),
+          h('p', { class: 'detail-period' }, detailParts.periodLabel, detailParts.period))),
       detailParts.chartNote,
       chartBox,
       detailParts.table,

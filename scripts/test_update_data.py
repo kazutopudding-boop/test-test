@@ -266,6 +266,31 @@ class ChartTest(unittest.TestCase):
 
 
 class StocksTest(unittest.TestCase):
+    def test_stops_asking_for_15_minute_bars_after_failures(self):
+        original_get, original_sleep = ud.http_get, ud.time.sleep
+        intraday_calls = []
+
+        def fake(url, **kwargs):
+            if "interval=15m" in url:
+                intraday_calls.append(url)
+                raise TimeoutError("timed out")
+            if "trending" in url:
+                return b'{"finance": {"result": [{"quotes": []}]}}'
+            return json.dumps(chart_payload(DAYS, [2800.0, 2850.0, 2870.0], 2870.0, DAYS[2] + 3600)).encode()
+
+        ud.http_get = fake
+        ud.time.sleep = lambda seconds: None
+        try:
+            old_bars = {"interval": 900, "offset": 0, "bars": [[1, 1, 1, 1, 1]]}
+            stocks = ud.fetch_stocks({"indices": [{"symbol": "^DJI", "intraday": old_bars}]}, [])
+        finally:
+            ud.http_get, ud.time.sleep = original_get, original_sleep
+        # 3回続けて失敗したら、残りの銘柄では15分足を取りに行かない
+        self.assertEqual(len(intraday_calls), 3)
+        self.assertEqual(len(stocks["jp"]), len(ud.JP_STOCKS))
+        # 取れなかった銘柄は前回の15分足を使う
+        self.assertEqual(next(q for q in stocks["indices"] if q["symbol"] == "^DJI")["intraday"], old_bars)
+
     def test_short_company_name(self):
         self.assertEqual(ud.short_company_name("Chipotle Mexican Grill, Inc."), "Chipotle Mexican Grill")
         self.assertEqual(ud.short_company_name("AT&T Inc."), "AT&T")

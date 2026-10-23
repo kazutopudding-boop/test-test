@@ -470,7 +470,7 @@ def parse_intraday(payload: dict, decimals: int) -> dict | None:
     }
 
 
-def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None) -> dict:
+def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None, intraday: bool = True) -> dict:
     quoted = urllib.parse.quote(symbol, safe="")
     error: Exception | None = None
     for host in ("query1", "query2"):
@@ -480,13 +480,16 @@ def fetch_quote(symbol: str, name: str, unit: str, decimals: int | None) -> dict
             if quote:
                 # Yahoo は JPY=X を USDJPY=X と返すことがあるので、問い合わせた記号にそろえる
                 quote["symbol"] = symbol
-                # 15分足は取れなくても日足だけで表示できるので、失敗しても止めない
-                try:
-                    time.sleep(0.3)
-                    intraday = json.loads(http_get(INTRADAY_URL.format(host=host, symbol=quoted), attempts=2))
-                    quote["intraday"] = parse_intraday(intraday, quote["decimals"])
-                except Exception:
-                    quote["intraday"] = None
+                # 15分足は取れなくても日足だけで表示できるので、失敗しても止めない。
+                # 待たされると全体が長引くので、1回だけ・短い時間で諦める
+                quote["intraday"] = None
+                if intraday:
+                    try:
+                        time.sleep(0.3)
+                        payload = json.loads(http_get(INTRADAY_URL.format(host=host, symbol=quoted), timeout=8, attempts=1))
+                        quote["intraday"] = parse_intraday(payload, quote["decimals"])
+                    except Exception:
+                        pass
                 return quote
             error = ValueError("データが空でした")
         except Exception as e:
@@ -515,14 +518,21 @@ def fetch_stocks(previous: dict | None, log: list[str]) -> dict:
             old[quote["symbol"]] = quote
 
     failures_in_a_row = 0
+    intraday_failures = 0
 
     def get(symbol: str, name: str, unit: str, decimals: int | None) -> dict | None:
-        nonlocal failures_in_a_row
+        nonlocal failures_in_a_row, intraday_failures
         if failures_in_a_row < 4:  # 何度も続けて失敗したら、相手が混雑しているので取得をやめる
             time.sleep(0.4)  # 相手のサーバーに負担をかけないよう、少し間をあける
             try:
-                quote = fetch_quote(symbol, name, unit, decimals)
+                quote = fetch_quote(symbol, name, unit, decimals, intraday=intraday_failures < 3)
                 failures_in_a_row = 0
+                if quote["intraday"]:
+                    intraday_failures = 0
+                else:
+                    intraday_failures += 1
+                    # 15分足が取れなかったときは、前回の15分足を使う
+                    quote["intraday"] = old.get(symbol, {}).get("intraday")
                 return quote
             except Exception as e:
                 failures_in_a_row += 1

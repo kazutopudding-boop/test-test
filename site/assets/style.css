@@ -718,3 +718,11 @@ a.globe-card-title::after { content: " ↗"; font-size: 13px; color: var(--space
 }
 .tile-name .badge, .tile-name .live-badge { flex: none; white-space: nowrap; }
 .chart-note { margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+/* 5秒足・1分足（接続中だけ出る期間）には小さな赤い点を付ける */
+.chip-button--live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--up);
+}

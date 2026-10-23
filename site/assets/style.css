@@ -662,3 +662,58 @@ a.globe-card-title::after { content: " ↗"; font-size: 13px; color: var(--space
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- 米国株のリアルタイム ---------- */
+
+.live-panel {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+.live-panel.is-live { border-style: solid; border-color: var(--up); }
+.live-head { display: flex; align-items: center; gap: 8px; }
+.live-title { font-weight: 700; font-size: 14px; }
+.live-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-key {
+  flex: 1 1 220px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.live-status { font-size: 13px; color: var(--ink-2); }
+.live-status:empty { display: none; }
+.live-status.is-error { color: var(--up); }
+.live-help { font-size: 12px; color: var(--ink-2); }
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--up);
+  color: var(--on-tone);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+}
+
+/* 値が動いたときに、一瞬だけ背景を光らせる */
+.tile-price { border-radius: 6px; }
+.tile-price.flash-up { animation: flash-up 0.9s ease-out; }
+.tile-price.flash-down { animation: flash-down 0.9s ease-out; }
+@keyframes flash-up { from { background: color-mix(in srgb, var(--up) 25%, transparent); } to { background: transparent; } }
+@keyframes flash-down { from { background: color-mix(in srgb, var(--down) 25%, transparent); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .tile-price.flash-up, .tile-price.flash-down { animation: none; }
+}
+.tile-name .badge, .tile-name .live-badge { flex: none; white-space: nowrap; }

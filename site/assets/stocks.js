@@ -4,11 +4,30 @@ import { h, formatNumber, formatSigned, formatDateTime, formatDay, direction } f
 import { sparkline, CandleChart, toCandle } from './chart.js';
 import { LiveFeed } from './live.js';
 
+// 期間の切り替え。1日・5日は15分足、それより長い期間は日足
 const RANGES = [
-  ['1か月', 22],
-  ['3か月', 66],
-  ['6か月', Infinity],
+  { name: '1日', intraday: 'day' },
+  { name: '5日', intraday: 'all' },
+  { name: '1か月', days: 22 },
+  { name: '3か月', days: 66 },
+  { name: '6か月', days: Infinity },
 ];
+const BAR_SECONDS = 15 * 60;
+const hourMinute = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit' });
+const WEEKDAYS = '日月火水木金土';
+/** UNIX 秒 → "10/22(水) 23:45"（見ている人の時刻で表示） */
+function barLabel(t) {
+  const d = new Date(t * 1000);
+  return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]}) ${hourMinute.format(d)}`;
+}
+/** その足が取引所の時刻で何日の取引か */
+function sessionDay(t, offset) {
+  return new Date((t + offset) * 1000).toISOString().slice(0, 10);
+}
+const DAILY_FORMAT = { chart: {}, rowLabel: formatDay, header: '日付', changeLabel: '前日比', tableTitle: '表で見る（直近20日）' };
+const INTRADAY_FORMAT = {
+  rowLabel: barLabel, header: '日時', changeLabel: '前の足から', tableTitle: '表で見る（直近20本・15分足）',
+};
 const SHOW_FIRST = 8;
 const clockFormat = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -64,7 +83,7 @@ export function initStocks(root) {
   let market = 'jp';
   let showAll = false;
   let selected = '^N225';
-  let range = '3か月';
+  let range = '1日';
   const chartBox = h('div', { class: 'chart-box' });
   const chart = new CandleChart(chartBox);
   let detailParts = null;
@@ -76,6 +95,33 @@ export function initStocks(root) {
   // ---------- リアルタイム（米国株） ----------
 
   const liveCandles = new Map(); // 銘柄 → 最新の日足（データを読み直しても重ね直せるよう覚えておく）
+  const liveBars = new Map(); // 銘柄 → (15分足の開始時刻 → 足) 受け取った取引から作った15分足
+
+  function addTrade(symbol, time, value) {
+    const start = Math.floor(time / 1000 / BAR_SECONDS) * BAR_SECONDS;
+    if (!liveBars.has(symbol)) liveBars.set(symbol, new Map());
+    const bars = liveBars.get(symbol);
+    const bar = bars.get(start);
+    bars.set(start, bar
+      ? [start, bar[1], Math.max(bar[2], value), Math.min(bar[3], value), value]
+      : [start, value, value, value, value]);
+  }
+
+  /** 受け取った取引の15分足を、1時間ごとのデータの15分足に重ねる */
+  function applyLiveBars(quote) {
+    const bars = quote.intraday?.bars;
+    const live = liveBars.get(quote.symbol);
+    if (!bars || !live) return;
+    for (const bar of [...live.values()].sort((a, b) => a[0] - b[0])) {
+      const i = bars.findLastIndex((b) => b[0] === bar[0]);
+      if (i >= 0) {
+        const old = bars[i];
+        bars[i] = [old[0], old[1], Math.max(old[2], bar[2]), Math.min(old[3], bar[3]), bar[4]];
+      } else if (!bars.length || bar[0] > bars.at(-1)[0]) {
+        bars.push(bar);
+      }
+    }
+  }
   const changed = new Set();
   let liveState = 'idle';
   let liveMessage = '';
@@ -83,6 +129,7 @@ export function initStocks(root) {
   const feed = new LiveFeed({
     onCandle(symbol, candle) {
       liveCandles.set(symbol, candle);
+      addTrade(symbol, candle.time, candle.close);
       changed.add(symbol);
       lastTrade = Math.max(lastTrade ?? 0, candle.time);
     },
@@ -91,6 +138,7 @@ export function initStocks(root) {
       liveMessage = message;
       if (state === 'idle' || state === 'error') {
         liveCandles.clear();
+        liveBars.clear();
         lastTrade = null;
       }
       renderLivePanel();
@@ -154,6 +202,7 @@ export function initStocks(root) {
       if (!quote || !candle) continue;
       const before = quote.price;
       applyLive(quote, candle);
+      applyLiveBars(quote);
       refreshTile(quote, Math.sign(quote.price - before));
       if (quote.symbol === selected) refreshDetail(quote);
     }
@@ -203,14 +252,37 @@ export function initStocks(root) {
   // ---------- 選んだ銘柄の詳細 ----------
 
   function detailNumbers(quote) {
-    const days = RANGES.find(([name]) => name === range)[1];
+    const choice = RANGES.find((r) => r.name === range);
+    if (choice.intraday) {
+      const { bars = [], offset = 0 } = quote.intraday ?? {};
+      let rows = bars;
+      // 1日: いちばん新しい取引日の足だけ。変化は前日終値と比べる。5日: 最初の足の始値と比べる
+      let base = rows.length ? rows[0][1] : null;
+      if (choice.intraday === 'day' && bars.length) {
+        const lastDay = sessionDay(bars.at(-1)[0], offset);
+        rows = bars.filter((b) => sessionDay(b[0], offset) === lastDay);
+        base = quote.prev;
+      }
+      const lastClose = rows.length ? rows.at(-1)[4] : null;
+      const periodChange = base && lastClose != null ? ((lastClose - base) / base) * 100 : 0;
+      const format = {
+        ...INTRADAY_FORMAT,
+        chart: {
+          labelOf: barLabel,
+          tickOf: choice.intraday === 'day' ? (t) => hourMinute.format(new Date(t * 1000)) : (t) => formatDay(sessionDay(t, offset)).replace(/\(.\)/, ''),
+          changeLabel: INTRADAY_FORMAT.changeLabel,
+        },
+      };
+      return { rows, before: choice.intraday === 'day' ? base : null, periodChange, format };
+    }
+    const days = choice.days;
     const start = Math.max(0, quote.history.length - days);
     const rows = quote.history.slice(start);
     // 期間の変化は、期間が始まる前日の終値と最新の終値を比べる
     const before = start > 0 ? toCandle(quote.history[start - 1]).close : toCandle(rows[0]).open;
     const last = rows.length ? toCandle(rows.at(-1)).close : before;
     const periodChange = before ? ((last - before) / before) * 100 : 0;
-    return { rows, before: start > 0 ? before : null, periodChange };
+    return { rows, before: start > 0 ? before : null, periodChange, format: DAILY_FORMAT };
   }
 
   function timeText(quote) {
@@ -225,13 +297,14 @@ export function initStocks(root) {
       detailParts = null;
       return;
     }
-    const { rows, before, periodChange } = detailNumbers(quote);
+    const { rows, before, periodChange, format } = detailNumbers(quote);
     detailParts = {
       price: h('p', { class: 'detail-price' }, price(quote)),
       delta: h('span', {}, delta(quote)),
       time: h('p', { class: 'detail-time' }, timeText(quote)),
       period: h('span', { class: `delta ${direction(periodChange)}` }, `${formatSigned(periodChange, 2)}%`),
-      table: table(quote, rows),
+      table: table(quote, rows, format),
+      chartNote: h('p', { class: 'chart-note', hidden: rows.length > 0 }, '日中の値動きのデータがまだありません（次の更新で表示されます）'),
     };
     detail.replaceChildren(
       h('div', { class: 'detail-head' },
@@ -243,16 +316,17 @@ export function initStocks(root) {
           detailParts.time),
         h('div', { class: 'detail-controls' },
           h('div', { class: 'filters', role: 'group', 'aria-label': '期間' },
-            RANGES.map(([name]) => h('button', {
+            RANGES.map(({ name }) => h('button', {
               type: 'button', class: 'chip-button', 'aria-pressed': String(name === range),
               onclick: () => { range = name; renderDetail(); },
             }, name))),
           h('p', { class: 'detail-period' }, `${range}で `, detailParts.period))),
+      detailParts.chartNote,
       chartBox,
       detailParts.table,
     );
     chart.set(rows, {
-      unit: quote.unit, decimals: quote.decimals, before,
+      unit: quote.unit, decimals: quote.decimals, before, ...format.chart,
       label: `${quote.name}の${range}のローソク足`,
     });
   }
@@ -260,26 +334,27 @@ export function initStocks(root) {
   /** リアルタイム更新: 数字・グラフ・表だけを差し替える（開いている表やグラフで選んだ日付はそのまま） */
   function refreshDetail(quote) {
     if (!detailParts) return;
-    const { rows, before, periodChange } = detailNumbers(quote);
+    const { rows, before, periodChange, format } = detailNumbers(quote);
+    detailParts.chartNote.hidden = rows.length > 0;
     detailParts.price.replaceChildren(...price(quote).filter(Boolean));
     detailParts.delta.replaceChildren(delta(quote));
     detailParts.time.textContent = timeText(quote);
     detailParts.period.className = `delta ${direction(periodChange)}`;
     detailParts.period.textContent = `${formatSigned(periodChange, 2)}%`;
-    const newTable = table(quote, rows);
+    const newTable = table(quote, rows, format);
     newTable.open = detailParts.table.open;
     detailParts.table.replaceWith(newTable);
     detailParts.table = newTable;
-    chart.set(rows, { unit: quote.unit, decimals: quote.decimals, before, keepActive: true });
+    chart.set(rows, { unit: quote.unit, decimals: quote.decimals, before, keepActive: true, ...format.chart });
   }
 
-  function table(quote, history) {
+  function table(quote, history, format) {
     const candles = history.slice(-21).map(toCandle);
     const d = quote.decimals;
     const rows = candles.slice(1).reverse().map((c, i, arr) => {
       const before = (arr[i + 1] ?? candles[0]).close;
       return h('tr', {},
-        h('th', { scope: 'row' }, formatDay(c.day)),
+        h('th', { scope: 'row' }, format.rowLabel(c.day)),
         h('td', {}, formatNumber(c.open, d)),
         h('td', {}, formatNumber(c.high, d)),
         h('td', {}, formatNumber(c.low, d)),
@@ -288,9 +363,9 @@ export function initStocks(root) {
           `${formatSigned(((c.close - before) / before) * 100, 2)}%`));
     });
     return h('details', { class: 'detail-table' },
-      h('summary', {}, '表で見る（直近20日）'),
+      h('summary', {}, format.tableTitle),
       h('table', {},
-        h('thead', {}, h('tr', {}, ...['日付', '始値', '高値', '安値', '終値', '前日比'].map((t) => h('th', { scope: 'col' }, t)))),
+        h('thead', {}, h('tr', {}, ...[format.header, '始値', '高値', '安値', '終値', format.changeLabel].map((t) => h('th', { scope: 'col' }, t)))),
         h('tbody', {}, rows)));
   }
 
@@ -322,12 +397,17 @@ export function initStocks(root) {
     update(next) {
       original = next;
       // 重ねたリアルタイムの値が元データに残らないよう、写しを使う
-      const copy = (list) => (list ?? []).map((q) => ({ ...q, history: q.history.slice() }));
+      const copy = (list) => (list ?? []).map((q) => ({
+        ...q,
+        history: q.history.slice(),
+        intraday: q.intraday && { ...q.intraday, bars: q.intraday.bars.slice() },
+      }));
       data = { indices: copy(next.indices), jp: copy(next.jp), us: copy(next.us) };
       // 1時間ごとのデータを読み直しても、受け取り済みのリアルタイムの値は重ね直す
       for (const quote of data.us) {
         const candle = liveCandles.get(quote.symbol);
         if (candle) applyLive(quote, candle);
+        applyLiveBars(quote);
       }
       if (!all().some((q) => q.symbol === selected)) selected = all()[0]?.symbol;
       if (!all().length) {

@@ -249,6 +249,18 @@ class ChartTest(unittest.TestCase):
         self.assertEqual(quote["prev"], 2800.0)
         self.assertEqual(quote["name"], "7203.T")
 
+    def test_intraday(self):
+        payload = chart_payload(
+            [1792540800, 1792541700, 1792542600], [2850.0, None, 2870.0], 2870.0, 1792542600,
+            ohlc={"open": [2840.0, None, 2850.0], "high": [2855.0, None, 2875.0], "low": [2835.0, None, None]},
+        )
+        intraday = ud.parse_intraday(payload, 0)
+        self.assertEqual(intraday["interval"], 900)
+        self.assertEqual(intraday["offset"], 32400)
+        # 終値のない足は飛ばし、欠けた安値は終値などで埋める
+        self.assertEqual(intraday["bars"], [[1792540800, 2840, 2855, 2835, 2850], [1792542600, 2850, 2875, 2850, 2870]])
+        self.assertIsNone(ud.parse_intraday({"chart": {"result": []}}, 0))
+
     def test_empty(self):
         self.assertIsNone(ud.parse_chart({"chart": {"result": None, "error": {}}}, "", "", 2))
 
